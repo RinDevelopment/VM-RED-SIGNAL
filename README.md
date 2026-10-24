@@ -1,16 +1,43 @@
+<div align="center">
+
 # lua-shroud
 
 **Source in. Nothing readable out.**
 
-`Lua 5.1` · `zero dependencies` · `keyless by default` · `custom bytecode VM`
+![Lua 5.1](https://img.shields.io/badge/lua-5.1-blue)
+![zero deps](https://img.shields.io/badge/dependencies-zero-success)
+![keyless](https://img.shields.io/badge/keyless-by%20default-informational)
+![tests](https://img.shields.io/badge/tests-18%2F18%20passing-brightgreen)
 
 lua-shroud turns your own Lua source into a self-contained artifact with no readable source at rest, no standard Lua bytecode, and no raw key. Two pipelines: a custom bytecode VM for strength, a portable source wrapper for compatibility.
 
-> Built for code you own. Keep the source, ship the shroud.
+*Built for code you own. Keep the source, ship the shroud.*
+
+</div>
 
 ---
 
-## quick start
+## Contents
+
+- [Quick start](#quick-start)
+- [Requirements](#requirements)
+- [What a probe finds](#what-a-probe-finds)
+- [Pipelines](#pipelines)
+- [Keyless by default](#keyless-by-default)
+- [CLI](#cli)
+- [Examples](#examples)
+- [Layers](#layers)
+- [Security model](#security-model)
+- [Performance](#performance)
+- [Tests](#tests)
+- [Layout](#layout)
+- [Design notes](#design-notes)
+- [FAQ](#faq)
+- [Status](#status)
+
+---
+
+## Quick start
 
 ```bash
 git clone https://github.com/RinDevelopment/VM-RED-SIGNAL.git
@@ -23,19 +50,19 @@ lua out/app.lua
 
 No key. No config. `--verify` runs the original and the protected build, compares stdout and exit code, and fails the build on any difference.
 
-## requirements
+## Requirements
 
-| need | why |
+| Need | Why |
 |---|---|
 | Lua 5.1+ | run the generated loader |
 | Lua 5.1 `luac` | vm builds only |
-| nothing else | no Lua modules, no build system |
+| Nothing else | no Lua modules, no build system |
 
 ---
 
-## what a probe finds
+## What a probe finds
 
-| probe | result |
+| Probe | Result |
 |---|---|
 | `grep` for source strings | nothing readable |
 | standard Lua bytecode in the artifact | none; the payload is a private container |
@@ -44,53 +71,44 @@ No key. No config. `--verify` runs the original and the protected build, compare
 | debug hook set before load | loader exits |
 | build A vs build B | different key, salt, opcode map, loader names |
 
-Standard `luac` output is a documented format; `luac -l` hands the logic back. lua-shroud's vm pipeline parses the chunk, remaps every opcode through a per-build permutation, repacks it into a private container, and encrypts the result. There is no standard chunk left to disassemble.
+Standard `luac` output is a documented format — `luac -l` hands the logic back. lua-shroud's vm pipeline parses the chunk, remaps every opcode through a per-build permutation, repacks it into a private container, and encrypts the result. There is no standard chunk left to disassemble.
 
 ---
 
-## pipelines
+## Pipelines
 
-### vm — default, strongest
+### `vm` — default, strongest
 
 ```text
 app.lua
   │
   ├─ luac -s ────────────── strip debug info
-  │
   ├─ Lua 5.1 chunk parser ─ read protos, constants, upvalues
-  │
   ├─ opcode permutation ─── fresh map per build
-  │
   ├─ private container ──── custom proto format
-  │
-  ├─ rolling XOR → RC4 ─── encrypted blob
-  │
+  ├─ rolling XOR → RC4 ──── encrypted blob
   └─ loader + interpreter ─ one self-contained file
 ```
 
 No source text exists at runtime. No `loadstring`. Constants travel inside the encrypted blob, and the interpreter maps the per-build opcode table before execution.
 
-### source — portable fallback
+### `source` — portable fallback
 
 ```text
 app.lua
   │
   ├─ string pool ────────── literals extracted + encrypted
-  │
   ├─ chunk split ────────── random sizes
-  │
   ├─ per-chunk encrypt ──── shuffled order
-  │
   ├─ Adler-32 ───────────── integrity per chunk
-  │
   └─ loader ─────────────── loadstring/load
 ```
 
-Runs across Lua versions. Weaker than vm: the source is reconstructed in memory before `loadstring` sees it.
+Runs across Lua versions. Weaker than `vm`: the source is reconstructed in memory before `loadstring` sees it.
 
 ---
 
-## keyless by default
+## Keyless by default
 
 A fresh 64-byte key is derived from 32 bytes of OS entropy on every build. It is never printed and never stored as raw bytes.
 
@@ -107,7 +125,7 @@ runtime
 - `--key=<string>` is optional for reproducible builds. An RC4-based KDF expands it to 64 bytes, then it takes the same split-share path — the supplied string never appears in the artifact.
 - `--keymode=external` keeps even the shares out of the artifact; the runtime reads `SHROUD_KEY`.
 
-| key mode | build input | runtime input | key in artifact |
+| Key mode | Build input | Runtime input | Key in artifact |
 |---|---|---|---|
 | `embedded` (default) | none | none | split shares only |
 | `embedded` + `--key` | passphrase | none | split shares only |
@@ -115,9 +133,9 @@ runtime
 
 ---
 
-## cli
+## CLI
 
-| flag | default | what it does |
+| Flag | Default | What it does |
 |---|---|---|
 | `input.lua` | required | source file |
 | `--out=<path>` | `<input>.shroud.lua` | output path |
@@ -126,11 +144,11 @@ runtime
 | `--keymode=embedded\|external` | `embedded` | where the key material lives |
 | `--key=<string>` | generated | optional reproducible key |
 | `--verify` | off | run original + protected, compare stdout and exit code |
-| `--help` | | usage |
+| `--help` | — | usage |
 
 ---
 
-## examples
+## Examples
 
 ```bash
 # keyless vm, the default
@@ -154,9 +172,9 @@ Script arguments and shebangs survive both pipelines.
 
 ---
 
-## layers
+## Layers
 
-| layer | source | vm |
+| Layer | source | vm |
 |---|---|---|
 | string literals encrypted | yes | yes, inside the blob |
 | chunked + shuffled | yes | single encrypted blob |
@@ -172,17 +190,17 @@ Script arguments and shebangs survive both pipelines.
 
 ---
 
-## security model
+## Security model
 
-### what it stops
+### What it stops
 
 - Static source extraction with `grep`, `strings`, or an editor.
-- Standard Lua bytecode tooling: there is no standard chunk to load.
-- Raw key extraction: no key bytes are stored.
-- Naive `loadstring` dumping in vm mode: it is never called.
-- A debug hook set before the loader runs: the loader exits.
+- Standard Lua bytecode tooling — there is no standard chunk to load.
+- Raw key extraction — no key bytes are stored.
+- Naive `loadstring` dumping in vm mode — it is never called.
+- A debug hook set before the loader runs — the loader exits.
 
-### what it does not stop
+### What it does not stop
 
 - A debugger attached to a running process.
 - A memory dump after decryption.
@@ -190,24 +208,24 @@ Script arguments and shebangs survive both pipelines.
 - Behavior and I/O analysis.
 - Unlimited time plus custom tooling.
 
-No obfuscator is absolute. This stack raises the cost; it does not prove impossibility. vm mode is the strong path, source mode is the compatibility path.
+> No obfuscator is absolute. This stack raises the cost; it does not prove impossibility. `vm` mode is the strong path, `source` mode is the compatibility path.
 
 ---
 
-## performance
+## Performance
 
 Measured in this container, Lua 5.1.5, 317 KB input:
 
-| build | output | build time | run time |
+| Build | Output | Build time | Run time |
 |---|---|---|---|
 | vm | 411 KB | 1.06 s | 0.24 s |
 | source | 666 KB | 1.70 s | 0.35 s |
 
-vm output is interpreted; tight numeric loops are slower than native Lua. Ordinary scripts are dominated by startup decrypt. Source mode runs at native speed after `loadstring`.
+`vm` output is interpreted; tight numeric loops are slower than native Lua. Ordinary scripts are dominated by startup decrypt. `source` mode runs at native speed after `loadstring`.
 
 ---
 
-## tests
+## Tests
 
 ```bash
 bash test/run.sh
@@ -218,7 +236,7 @@ Covers both pipelines, keyless embedded builds, external keys, per-build randomn
 
 ---
 
-## layout
+## Layout
 
 ```text
 .
@@ -244,7 +262,7 @@ Covers both pipelines, keyless embedded builds, external keys, per-build randomn
 
 ---
 
-## design notes
+## Design notes
 
 **Per-build randomness.** Key, salt, opcode permutation, chunk order, and loader names change on every build. There is no stable signature to match.
 
@@ -258,34 +276,65 @@ Covers both pipelines, keyless embedded builds, external keys, per-build randomn
 
 ---
 
-## faq
+## FAQ
 
-**Does it need a key?**
+<details>
+<summary><strong>Does it need a key?</strong></summary><br>
+
 No. Embedded mode generates one per build and hides it in the artifact.
+</details>
 
-**Can I use my own key?**
+<details>
+<summary><strong>Can I use my own key?</strong></summary><br>
+
 Yes. `--key=<string>` is optional and useful for reproducible builds. It is expanded to 64 bytes and embedded through the same split-share path.
+</details>
 
-**Can it be deobfuscated?**
+<details>
+<summary><strong>Can it be deobfuscated?</strong></summary><br>
+
 Not absolutely. A debugger attached to a running process can eventually observe plaintext. The goal is to remove the cheap paths: source at rest, standard bytecode, raw keys, and naive hook dumps.
+</details>
 
-**Can I ship one file?**
+<details>
+<summary><strong>Can I ship one file?</strong></summary><br>
+
 Yes. Embedded mode is self-contained. External mode needs `SHROUD_KEY` at runtime.
+</details>
 
-**Why is vm slower?**
+<details>
+<summary><strong>Why is vm slower?</strong></summary><br>
+
 It is an interpreter. Startup decrypt plus per-instruction dispatch costs more than native Lua, especially in tight numeric loops.
+</details>
 
-**Does source mode hide strings?**
+<details>
+<summary><strong>Does source mode hide strings?</strong></summary><br>
+
 Yes, literals move into an encrypted pool, but the source is reassembled in memory before `loadstring`. vm mode is stronger.
+</details>
 
-**What Lua versions are supported?**
+<details>
+<summary><strong>What Lua versions are supported?</strong></summary><br>
+
 Builds target Lua 5.1. vm mode additionally requires a Lua 5.1 `luac` on `PATH`. Generated vm output is Lua 5.1-compatible. Source mode uses `loadstring`/`load` and runs across Lua versions.
+</details>
 
 ---
 
-## status
+## Status
 
-- `18/18` tests passing
-- default mode: `vm`
-- default key mode: `embedded`
-- runtime dependencies: none
+| | |
+|---|---|
+| Tests | `18/18` passing |
+| Default mode | `vm` |
+| Default key mode | `embedded` |
+| Runtime dependencies | none |
+
+---
+
+<div align="center">
+
+*lua-shroud — keep the source, ship the shroud.*
+
+</div>
