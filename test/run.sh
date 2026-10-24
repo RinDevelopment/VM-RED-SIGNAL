@@ -61,6 +61,22 @@ lua cli/obfuscate.lua samples/test.lua --key="$LEAK_KEY" --mode=vm --out=out/lea
 if grep -q "$LEAK_KEY" out/leak.lua; then bad "supplied key not in artifact"; else ok "supplied key not in artifact"; fi
 if lua out/leak.lua >/dev/null 2>&1; then ok "supplied-key build runs"; else bad "supplied-key build runs"; fi
 
+echo "== cli style =="
+QUIET_OUT=$(lua cli/obfuscate.lua samples/test.lua --out=out/q.lua --quiet 2>&1)
+if [ -z "$QUIET_OUT" ]; then ok "quiet stdout"; else bad "quiet stdout"; fi
+if lua out/q.lua >/dev/null 2>&1; then ok "quiet build runs"; else bad "quiet build runs"; fi
+if FORCE_COLOR=1 lua cli/obfuscate.lua samples/test.lua --out=out/nc.lua --no-color 2>&1 | grep -q $'\033'; then
+    bad "no-color output"
+else
+    ok "no-color output"
+fi
+if lua cli/obfuscate.lua --version | grep -q '^lua-shroud '; then ok "version"; else bad "version"; fi
+if lua cli/obfuscate.lua samples/test.lua --mode=nope --out=out/bad.lua >/dev/null 2>&1; then
+    bad "invalid mode"
+else
+    ok "invalid mode"
+fi
+
 echo "== args + shebang =="
 lua cli/obfuscate.lua samples/args.lua --mode=vm --out=out/args.vm.lua >/dev/null 2>&1
 lua cli/obfuscate.lua samples/args.lua --mode=source --out=out/args.src.lua >/dev/null 2>&1

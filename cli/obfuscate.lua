@@ -1,13 +1,17 @@
 -- language: Lua 5.1, file: cli/obfuscate.lua
 -- lua cli/obfuscate.lua input.lua [--out=...] [--mode=vm|source]
 --   [--level=paranoid|normal] [--keymode=embedded|external] [--verify]
---   [--key=...]  (optional; embedded mode generates one when omitted)
+--   [--key=...] [--quiet] [--no-color] [--version]
+--   (--key is optional; embedded mode generates one when omitted)
+
+local VERSION = "1.1.0"
 
 local here = (arg[0] or "cli/obfuscate.lua"):match("^(.*)[/\\][^/\\]*$") or "."
 local root = here .. "/.."
 package.path = root .. "/?.lua;" .. root .. "/?/init.lua;" .. package.path
 
 local util = require("util.utils")
+local report = require("util.report")
 local crypt = require("core.crypt")
 local strings = require("transform.strings")
 local junk = require("transform.junk")
@@ -43,6 +47,9 @@ local function parse(argv)
         if md then o.mode = md end
         if v == "--verify" then o.verify = true end
         if v == "--help" then o.help = true end
+        if v == "--quiet" then o.quiet = true end
+        if v == "--no-color" then o.nocolor = true end
+        if v == "--version" then o.version = true end
         if v:sub(1, 1) ~= "-" and not o.input then o.input = v end
         i = i + 1
     end
@@ -53,6 +60,7 @@ local function usage()
     print("usage: lua cli/obfuscate.lua input.lua [--out=protected.lua]")
     print("       [--mode=vm|source] [--level=paranoid|normal]")
     print("       [--keymode=embedded|external] [--verify] [--key=<optional>]")
+    print("       [--quiet] [--no-color] [--version]")
     print("       embedded mode needs no key; one is generated and hidden in the build")
 end
 
@@ -184,7 +192,8 @@ local function syntax_ok(path)
     return out == "", out
 end
 
-local function do_verify(o, key, out_path)
+local function do_verify(o, key, out_path, stage, total)
+    local started = report.begin(stage, total, "verify")
     local env = ""
     if o.keymode == "external" then
         env = "SHROUD_KEY=" .. util.shellquote(key)
@@ -194,14 +203,12 @@ local function do_verify(o, key, out_path)
     util.write(root .. "/out/verify_original.txt", out1)
     util.write(root .. "/out/verify_protected.txt", out2)
     if c1 == c2 and out1 == out2 then
-        print("[+] verify : output match (exit " .. c1 .. ", " .. #out1 .. " bytes)")
+        report.done(started, "stdout + exit match")
         return true
     end
-    print("[!] verify : mismatch")
-    print("--- original (exit " .. c1 .. ") ---")
-    print(out1:sub(1, 1200))
-    print("--- protected (exit " .. c2 .. ") ---")
-    print(out2:sub(1, 1200))
+    report.fail(started, "mismatch")
+    report.detail("original (exit " .. c1 .. ")", out1:sub(1, 1200))
+    report.detail("protected (exit " .. c2 .. ")", out2:sub(1, 1200))
     return false
 end
 
@@ -213,25 +220,29 @@ local function make_key(o)
 
     if o.keymode == "external" then
         if not supplied or supplied == "" then
-            print("[!] external key mode needs --key or SHROUD_KEY")
+            report.error("external key mode needs --key or SHROUD_KEY")
             return nil
         end
-        print("[*] key    : external (" .. #supplied .. " bytes, not embedded)")
+        report.field("key", "external  ·  " .. #supplied .. " B  ·  not embedded")
         return supplied
     end
 
     if supplied and supplied ~= "" then
         local key = crypt.rc4(supplied, string.rep("\0", 64))
-        print("[*] key    : supplied (" .. #supplied .. " bytes -> 64-byte key, embedded)")
+        report.field("key", "supplied  ·  " .. #supplied .. " B → 64 B  ·  embedded")
         return key
     end
 
     local key = crypt.rc4(util.strongbytes(32), string.rep("\0", 64))
-    print("[*] key    : generated 64 bytes (embedded, not shown)")
+    report.field("key", "generated  ·  64 B  ·  embedded, not shown")
     return key
 end
 
 local function build_vm(o, body, shebang, key, salt, out_path)
+    local total = o.verify and 7 or 6
+    local build_start = os.clock()
+
+    local started = report.begin(1, total, "compile")
     local tmp_src = os.tmpname()
     local tmp_bc = os.tmpname()
     util.write(tmp_src, body)
@@ -241,16 +252,28 @@ local function build_vm(o, body, shebang, key, salt, out_path)
     os.remove(tmp_src)
     os.remove(tmp_bc)
     if not raw or #raw < 12 then
-        print("[!] luac failed. vm mode needs a Lua 5.1 luac on PATH")
+        report.fail(started, "luac failed — vm mode needs Lua 5.1 luac on PATH")
         return false
     end
+    report.done(started, report.size(#raw))
+
+    started = report.begin(2, total, "parse")
     local parsed, perr = bytecode.parse(raw)
     if not parsed then
-        print("[!] bytecode parse: " .. tostring(perr))
+        report.fail(started, "bytecode parse: " .. tostring(perr))
         return false
     end
+    report.done(started, "Lua 5.1 chunk")
+
+    started = report.begin(3, total, "remap")
     local blob = vmser.serialize(parsed)
+    report.done(started, report.size(#blob) .. " custom")
+
+    started = report.begin(4, total, "encrypt")
     local packed = crypt.pack(blob, key, salt, 0)
+    report.done(started, "XOR + RC4")
+
+    started = report.begin(5, total, "render")
     local vars = {
         SHEBANG = shebang,
         KEYINIT = (o.keymode == "external") and keyinit_external(salt) or keyinit_embedded(key, salt),
@@ -259,38 +282,46 @@ local function build_vm(o, body, shebang, key, salt, out_path)
     local rendered = util.polymorph(vmtpl.render(vars))
     local ok, werr = util.write(out_path, rendered)
     if not ok then
-        print("[!] write failed: " .. tostring(werr))
+        report.fail(started, "write failed: " .. tostring(werr))
         return false
     end
-    print("[*] bytecode: " .. #raw .. " bytes -> " .. #blob .. " custom, remapped opcodes")
-    print("[*] output : " .. out_path .. " (" .. #rendered .. " bytes)")
-    print("[*] mode   : vm | keymode: " .. o.keymode)
+    report.done(started, report.size(#rendered) .. " artifact")
+
+    started = report.begin(6, total, "check")
     local sok, serr = syntax_ok(out_path)
     if not sok then
-        print("[!] syntax check failed: " .. serr)
+        report.fail(started, "syntax check failed: " .. tostring(serr))
         return false
     end
-    print("[*] syntax : " .. (serr == "" and "ok" or serr))
-    if o.verify and not do_verify(o, key, out_path) then return false end
+    report.done(started, (serr == "" and "syntax ok") or tostring(serr))
+
+    if o.verify and not do_verify(o, key, out_path, 7, total) then return false end
+    report.finish(out_path, #rendered, os.clock() - build_start)
     return true
 end
 
 local function build_source(o, body, shebang, key, salt, out_path)
+    local total = o.verify and 6 or 5
+    local build_start = os.clock()
+
+    local started = report.begin(1, total, "strings")
     local decname = util.randname("__sh")
     while body:find(decname, 1, true) do
         decname = util.randname("__sh")
     end
-
     local encoded, pool = strings.encode(body, decname)
-    print("[*] strings: " .. #pool .. " literal(s) moved to encrypted pool")
+    report.done(started, #pool .. " literal(s)")
 
+    started = report.begin(2, total, "pool")
+    local pool_blob = crypt.pack(crypt.serialize_pool(pool), key, salt, 0)
+    report.done(started, report.size(#pool_blob) .. " encrypted")
+
+    started = report.begin(3, total, "chunks")
     local payload = "local " .. decname .. " = " .. decname .. "\n"
     if o.level == "paranoid" then
         payload = payload .. junk.noise()
     end
     payload = payload .. encoded
-
-    local pool_blob = crypt.pack(crypt.serialize_pool(pool), key, salt, 0)
 
     local chunks = {}
     local checks = {}
@@ -332,7 +363,9 @@ local function build_source(o, body, shebang, key, salt, out_path)
             decoys[#decoys + 1] = '["' .. (1000 + d) .. '"]="' .. table.concat(t) .. '"'
         end
     end
+    report.done(started, idx .. " chunk(s), shuffled")
 
+    started = report.begin(4, total, "render")
     local chunk_lit = {}
     for i = 1, idx do
         chunk_lit[#chunk_lit + 1] = "[" .. i .. "]=" .. hexlit(chunks[i])
@@ -357,36 +390,68 @@ local function build_source(o, body, shebang, key, salt, out_path)
     local rendered = util.polymorph(template.render(vars))
     local ok, werr = util.write(out_path, rendered)
     if not ok then
-        print("[!] write failed: " .. tostring(werr))
+        report.fail(started, "write failed: " .. tostring(werr))
         return false
     end
-    print("[*] chunks : " .. idx .. " (encrypted, shuffled order, adler checked)")
-    print("[*] output : " .. out_path .. " (" .. #rendered .. " bytes)")
-    print("[*] mode   : source | level: " .. o.level .. " | keymode: " .. o.keymode)
+    report.done(started, report.size(#rendered) .. " artifact")
+
+    started = report.begin(5, total, "check")
     local sok, serr = syntax_ok(out_path)
     if not sok then
-        print("[!] syntax check failed: " .. serr)
+        report.fail(started, "syntax check failed: " .. tostring(serr))
         return false
     end
-    print("[*] syntax : " .. (serr == "" and "ok" or serr))
-    if o.verify and not do_verify(o, key, out_path) then return false end
+    report.done(started, (serr == "" and "syntax ok") or tostring(serr))
+
+    if o.verify and not do_verify(o, key, out_path, 6, total) then return false end
+    report.finish(out_path, #rendered, os.clock() - build_start)
     return true
 end
 
 local function main()
     util.seed()
     local o = parse(arg)
+
+    if o.version then
+        print("lua-shroud " .. VERSION)
+        os.exit(0)
+    end
+
+    local color = (not o.nocolor) and (not o.quiet)
+        and report.is_tty()
+        and os.getenv("NO_COLOR") == nil
+        and os.getenv("TERM") ~= "dumb"
+    if (not o.nocolor) and os.getenv("FORCE_COLOR") and os.getenv("FORCE_COLOR") ~= "0" then
+        color = true
+    end
+    report.setup({ quiet = o.quiet, color = color })
+
     if o.help or not o.input then
         usage()
         os.exit(o.help and 0 or 1)
     end
 
-    local src, err = util.read(o.input)
-    if not src then
-        print("[!] read failed: " .. tostring(err))
+    if o.mode ~= "vm" and o.mode ~= "source" then
+        report.error("mode must be vm or source")
         os.exit(1)
     end
-    print("[*] input  : " .. o.input .. " (" .. #src .. " bytes)")
+    if o.keymode ~= "embedded" and o.keymode ~= "external" then
+        report.error("keymode must be embedded or external")
+        os.exit(1)
+    end
+    if o.level ~= "paranoid" and o.level ~= "normal" then
+        report.error("level must be paranoid or normal")
+        os.exit(1)
+    end
+
+    local src, err = util.read(o.input)
+    if not src then
+        report.error("read failed: " .. tostring(err))
+        os.exit(1)
+    end
+
+    report.banner(o.mode)
+    report.field("input", o.input .. "  ·  " .. report.size(#src))
 
     local key = make_key(o)
     if not key then os.exit(1) end
@@ -403,10 +468,11 @@ local function main()
             shebang = body .. "\n"
             body = ""
         end
-        print("[*] shebang: preserved")
+        report.field("shebang", "preserved")
     end
 
     local out_path = o.out or (o.input:gsub("%.lua$", "") .. ".shroud.lua")
+    report.field("output", out_path)
     local ok
     if o.mode == "vm" then
         ok = build_vm(o, body, shebang, key, salt, out_path)

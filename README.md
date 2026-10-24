@@ -7,7 +7,7 @@
 ![Lua 5.1](https://img.shields.io/badge/lua-5.1-blue)
 ![zero deps](https://img.shields.io/badge/dependencies-zero-success)
 ![keyless](https://img.shields.io/badge/keyless-by%20default-informational)
-![tests](https://img.shields.io/badge/tests-18%2F18%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-23%2F23%20passing-brightgreen)
 
 lua-shroud turns your own Lua source into a self-contained artifact with no readable source at rest, no standard Lua bytecode, and no raw key. Two pipelines: a custom bytecode VM for strength, a portable source wrapper for compatibility.
 
@@ -25,6 +25,7 @@ lua-shroud turns your own Lua source into a self-contained artifact with no read
 - [Pipelines](#pipelines)
 - [Keyless by default](#keyless-by-default)
 - [CLI](#cli)
+- [Build output](#build-output)
 - [Examples](#examples)
 - [Layers](#layers)
 - [Security model](#security-model)
@@ -145,6 +146,32 @@ runtime
 | `--key=<string>` | generated | optional reproducible key |
 | `--verify` | off | run original + protected, compare stdout and exit code |
 | `--help` | — | usage |
+| `--quiet` | off | no stdout; errors still go to stderr |
+| `--no-color` | auto | disable ANSI colors |
+| `--version` | — | print version |
+
+Builds print a staged log with per-step timings. Colors auto-detect a TTY; `NO_COLOR` and `--no-color` disable them. `--quiet` leaves stdout clean.
+
+---
+
+## Build output
+
+```text
+lua-shroud  ·  vm pipeline
+source in. nothing readable out.
+input       app.lua  ·  784 B
+key         generated  ·  64 B  ·  embedded, not shown
+output      out/app.lua
+[1/7] compile    ... ok  889 B  ·  0.00s
+[2/7] parse      ... ok  Lua 5.1 chunk  ·  0.00s
+[3/7] remap      ... ok  762 B custom  ·  0.00s
+[4/7] encrypt    ... ok  XOR + RC4  ·  0.00s
+[5/7] render     ... ok  18.3 KB artifact  ·  0.05s
+[6/7] check      ... ok  syntax ok  ·  0.00s
+[7/7] verify     ... ok  stdout + exit match  ·  0.00s
+──────────────────────────────────────────────
+built  out/app.lua  ·  18.3 KB  ·  0.05s
+```
 
 ---
 
@@ -229,10 +256,10 @@ Measured in this container, Lua 5.1.5, 317 KB input:
 
 ```bash
 bash test/run.sh
-# total: 18 pass, 0 fail
+# total: 23 pass, 0 fail
 ```
 
-Covers both pipelines, keyless embedded builds, external keys, per-build randomness, raw-key leak checks, script arguments, shebang handling, closures, upvalues, varargs, multret, generic and numeric loops, metamethods, >50-element constructors, and a 317 KB source.
+Covers both pipelines, keyless embedded builds, external keys, per-build randomness, raw-key leak checks, CLI quiet/color/version checks, script arguments, shebang handling, closures, upvalues, varargs, multret, generic and numeric loops, metamethods, >50-element constructors, and a 317 KB source.
 
 ---
 
@@ -254,6 +281,7 @@ Covers both pipelines, keyless embedded builds, external keys, per-build randomn
 │   ├── template.lua         source-mode runtime
 │   └── vm_template.lua      bytecode interpreter runtime
 ├── util/
+│   ├── report.lua           terminal presentation: banner, stages, summary
 │   └── utils.lua            I/O, entropy, hashing, polymorphic names
 ├── samples/                 verification targets
 └── test/
@@ -326,7 +354,7 @@ Builds target Lua 5.1. vm mode additionally requires a Lua 5.1 `luac` on `PATH`.
 
 | | |
 |---|---|
-| Tests | `18/18` passing |
+| Tests | `23/23` passing |
 | Default mode | `vm` |
 | Default key mode | `embedded` |
 | Runtime dependencies | none |
