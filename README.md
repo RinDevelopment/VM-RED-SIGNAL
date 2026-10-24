@@ -4,16 +4,20 @@
 
 **Source in. Nothing readable out.**
 
+![version](https://img.shields.io/badge/version-1.1.0-blueviolet)
 ![Lua 5.1](https://img.shields.io/badge/lua-5.1-blue)
 ![zero deps](https://img.shields.io/badge/dependencies-zero-success)
 ![keyless](https://img.shields.io/badge/keyless-by%20default-informational)
 ![tests](https://img.shields.io/badge/tests-23%2F23%20passing-brightgreen)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
 lua-shroud turns your own Lua source into a self-contained artifact with no readable source at rest, no standard Lua bytecode, and no raw key. Two pipelines: a custom bytecode VM for strength, a portable source wrapper for compatibility.
 
 *Built for code you own. Keep the source, ship the shroud.*
 
 </div>
+
+> **TL;DR** — `lua cli/obfuscate.lua app.lua --out=out/app.lua` → one self-contained file. No key, no config, no readable source at rest.
 
 ---
 
@@ -22,18 +26,22 @@ lua-shroud turns your own Lua source into a self-contained artifact with no read
 - [Quick start](#quick-start)
 - [Requirements](#requirements)
 - [What a probe finds](#what-a-probe-finds)
+- [Why not just `luac`?](#why-not-just-luac)
 - [Pipelines](#pipelines)
 - [Keyless by default](#keyless-by-default)
 - [CLI](#cli)
 - [Build output](#build-output)
 - [Examples](#examples)
 - [Layers](#layers)
+- [Design principles](#design-principles)
 - [Security model](#security-model)
 - [Performance](#performance)
 - [Tests](#tests)
 - [Layout](#layout)
 - [Design notes](#design-notes)
 - [FAQ](#faq)
+- [Topics](#topics)
+- [License](#license)
 - [Status](#status)
 
 ---
@@ -74,6 +82,15 @@ No key. No config. `--verify` runs the original and the protected build, compare
 
 Standard `luac` output is a documented format — `luac -l` hands the logic back. lua-shroud's vm pipeline parses the chunk, remaps every opcode through a per-build permutation, repacks it into a private container, and encrypts the result. There is no standard chunk left to disassemble.
 
+### Why not just `luac`?
+
+| approach | readable source at rest | standard bytecode | raw key | static recovery |
+|---|---|---|---|---|
+| plain source | yes | no | no | trivial |
+| `luac -s` | no | yes | no | `luac -l` |
+| lua-shroud source | no | no | no | encrypted pool + chunks |
+| lua-shroud vm | no | no | no | custom container + VM |
+
 ---
 
 ## Pipelines
@@ -92,6 +109,16 @@ app.lua
 ```
 
 No source text exists at runtime. No `loadstring`. Constants travel inside the encrypted blob, and the interpreter maps the per-build opcode table before execution.
+
+What lands in `out/app.lua`:
+
+```text
+out/app.lua
+├─ polymorphic loader
+├─ split key shares
+├─ encrypted private blob
+└─ bytecode interpreter
+```
 
 ### `source` — portable fallback
 
@@ -217,6 +244,19 @@ Script arguments and shebangs survive both pipelines.
 
 ---
 
+## Design principles
+
+| principle | implementation |
+|---|---|
+| no readable source at rest | encrypted private blob / string pool |
+| no standard bytecode | per-build opcode map + custom container |
+| no raw key | four permuted XOR shares with per-byte shifts |
+| no stable fingerprint | fresh key, salt, opcode map, loader names |
+| one self-contained file | embedded mode has no runtime key input |
+| no runtime dependencies | pure Lua 5.1 |
+
+---
+
 ## Security model
 
 ### What it stops
@@ -267,6 +307,7 @@ Covers both pipelines, keyless embedded builds, external keys, per-build randomn
 
 ```text
 .
+├── LICENSE                  MIT
 ├── cli/
 │   └── obfuscate.lua        entry point
 ├── core/
@@ -350,6 +391,18 @@ Builds target Lua 5.1. vm mode additionally requires a Lua 5.1 `luac` on `PATH`.
 
 ---
 
+## Topics
+
+`lua` · `lua51` · `obfuscator` · `obfuscation` · `source-protection` · `code-protection` · `bytecode` · `virtual-machine` · `reverse-engineering` · `security-tools` · `anti-debug` · `keyless`
+
+---
+
+## License
+
+MIT © 2026 RinDevelopment. See [LICENSE](LICENSE) for the full text.
+
+---
+
 ## Status
 
 | | |
@@ -358,11 +411,14 @@ Builds target Lua 5.1. vm mode additionally requires a Lua 5.1 `luac` on `PATH`.
 | Default mode | `vm` |
 | Default key mode | `embedded` |
 | Runtime dependencies | none |
+| License | MIT |
 
 ---
 
 <div align="center">
 
 *lua-shroud — keep the source, ship the shroud.*
+
+<sub>© 2026 RinDevelopment · MIT</sub>
 
 </div>

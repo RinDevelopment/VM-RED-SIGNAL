@@ -1,4 +1,6 @@
 -- language: Lua 5.1, file: cli/obfuscate.lua
+-- Copyright (c) 2026 RinDevelopment
+-- SPDX-License-Identifier: MIT
 -- lua cli/obfuscate.lua input.lua [--out=...] [--mode=vm|source]
 --   [--level=paranoid|normal] [--keymode=embedded|external] [--verify]
 --   [--key=...] [--quiet] [--no-color] [--version]
