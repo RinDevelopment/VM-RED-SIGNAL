@@ -41,6 +41,7 @@ run_case "tricky.lua" lua cli/obfuscate.lua samples/tricky.lua --mode=source --o
 run_case "big.lua" lua cli/obfuscate.lua out/big_src.lua --mode=source --out=out/t4.lua --verify
 
 echo "== vm mode =="
+run_case "default mode (vm)" lua cli/obfuscate.lua samples/test.lua --out=out/v0.lua --verify
 run_case "test.lua" lua cli/obfuscate.lua samples/test.lua --mode=vm --out=out/v1.lua --verify
 run_case "vmtest.lua" lua cli/obfuscate.lua samples/vmtest.lua --mode=vm --out=out/v2.lua --verify
 run_case "tricky.lua" lua cli/obfuscate.lua samples/tricky.lua --mode=vm --out=out/v3.lua --verify
