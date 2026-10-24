@@ -56,6 +56,17 @@ function M.randbytes(n)
     return table.concat(t)
 end
 
+-- OS entropy when available, math.random fallback. used for key material.
+function M.strongbytes(n)
+    local f = io.open("/dev/urandom", "rb")
+    if f then
+        local d = f:read(n)
+        f:close()
+        if d and #d == n then return d end
+    end
+    return M.randbytes(n)
+end
+
 function M.seed()
     math.randomseed(os.time() + math.floor(os.clock() * 1000000))
     for i = 1, 32 do math.random() end
@@ -75,8 +86,9 @@ end
 -- because a few locals intentionally shadow globals on the right-hand side.
 local POLY = {
     "_B", "_C", "_S", "_F", "_T", "XOR", "bx", "rc4", "unroll", "hexlit",
-    "adler", "dec", "pool", "CH", "CK", "ORD", "parts", "src", "N", "fn",
-    "KT", "KB", "KEY", "ST", "SB", "SALT", "DC", "BLOB", "bp", "rb", "rw",
+    "adler", "dec", "nohook", "pool", "CH", "CK", "ORD", "parts", "src", "N", "fn",
+    "KT", "KB", "KA", "KC", "KD", "KP", "kn", "KEY", "ST", "SB", "SALT", "DC", "BLOB", "bp", "rb", "rw",
+    "a", "b", "c", "d",
     "rs", "rstr", "dbl", "inv", "rproto", "run", "mkcl", "R", "open", "top",
     "code", "K", "P", "maxstack", "gr", "sr", "truth", "rk", "invoke",
     "main", "le", "opn", "va", "np", "ins", "op", "A", "B", "C", "Bx",

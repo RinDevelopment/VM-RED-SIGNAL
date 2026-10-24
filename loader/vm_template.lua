@@ -72,14 +72,20 @@ local function hexlit(h)
   return _T(o)
 end
 @@KEYINIT@@
+local function nohook()
+  if type(debug) == "table" and type(debug.gethook) == "function" then
+    local ok, h = pcall(debug.gethook)
+    if ok and h then return false end
+  end
+  return true
+end
 local function dec(c)
+  if not nohook() then return nil end
   return unroll(KEY, rc4(KEY .. SALT .. "0", hexlit(c)))
 end
-if type(debug) == "table" and type(debug.gethook) == "function" then
-  local ok, h = pcall(debug.gethook)
-  if ok and h then return end
-end
+if not nohook() then return end
 local BLOB = dec(@@BLOB@@)
+if not BLOB or #BLOB < 5 then return end
 local bp = 1
 local function rb() local v = _B(BLOB, bp); bp = bp + 1; return v end
 local function rw()

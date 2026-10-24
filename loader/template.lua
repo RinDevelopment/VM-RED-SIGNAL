@@ -78,13 +78,23 @@ local function adler(s)
   return b * 65536 + a
 end
 @@KEYINIT@@
+local function nohook()
+  if type(debug) == "table" and type(debug.gethook) == "function" then
+    local ok, h = pcall(debug.gethook)
+    if ok and h then return false end
+  end
+  return true
+end
 local function dec(c, idx)
+  if not nohook() then return nil end
   return unroll(KEY, rc4(KEY .. SALT .. tostring(idx), hexlit(c)))
 end
+if not nohook() then return end
 local DC = @@DECOYS@@
 local pool = {}
 do
   local raw = dec(@@POOL@@, 0)
+  if not raw then return end
   local i = 1
   while i <= #raw do
     local l = _B(raw, i) * 16777216 + _B(raw, i + 1) * 65536 + _B(raw, i + 2) * 256 + _B(raw, i + 3)
@@ -99,7 +109,7 @@ local parts = {}
 for oi = 1, #ORD do
   local id = ORD[oi]
   local p = dec(CH[id], id)
-  if adler(p) ~= CK[id] then return end
+  if not p or adler(p) ~= CK[id] then return end
   parts[id] = p
 end
 local src = _T(parts)

@@ -1,6 +1,7 @@
 -- language: Lua 5.1, file: cli/obfuscate.lua
--- lua cli/obfuscate.lua input.lua --key=... --out=... [--mode=source|vm]
+-- lua cli/obfuscate.lua input.lua [--out=...] [--mode=vm|source]
 --   [--level=paranoid|normal] [--keymode=embedded|external] [--verify]
+--   [--key=...]  (optional; embedded mode generates one when omitted)
 
 local here = (arg[0] or "cli/obfuscate.lua"):match("^(.*)[/\\][^/\\]*$") or "."
 local root = here .. "/.."
@@ -16,7 +17,7 @@ local vmser = require("core.vmserialize")
 local vmtpl = require("loader.vm_template")
 
 local function parse(argv)
-    local o = { level = "paranoid", keymode = "embedded", mode = "source" }
+    local o = { level = "paranoid", keymode = "embedded", mode = "vm" }
     local i = 1
     while i <= #argv do
         local v = argv[i]
@@ -49,9 +50,10 @@ local function parse(argv)
 end
 
 local function usage()
-    print("usage: lua cli/obfuscate.lua input.lua --key=<key> [--out=protected.lua]")
-    print("       [--mode=source|vm] [--level=paranoid|normal]")
-    print("       [--keymode=embedded|external] [--verify]")
+    print("usage: lua cli/obfuscate.lua input.lua [--out=protected.lua]")
+    print("       [--mode=vm|source] [--level=paranoid|normal]")
+    print("       [--keymode=embedded|external] [--verify] [--key=<optional>]")
+    print("       embedded mode needs no key; one is generated and hidden in the build")
 end
 
 local function hexlit(h)
@@ -72,30 +74,94 @@ local function numtable(t)
     return "{" .. table.concat(parts, ",") .. "}"
 end
 
+local function encode_table(bytes, step, mask)
+    local t = {}
+    local stringy = type(bytes) == "string"
+    for i = 1, #bytes do
+        local b = stringy and string.byte(bytes, i) or bytes[i]
+        t[i] = (b + step * i + mask) % 256
+    end
+    return t
+end
+
+-- key material never appears as bytes. four random xor shares are permuted,
+-- then every share byte is shifted by a per-build step and mask. the loader
+-- rebuilds the key in a loop and drops the share tables immediately.
 local function keyinit_embedded(key, salt)
-    local kt = crypt.hide_bytes(key, 17)
-    local st = crypt.hide_bytes(salt, 29)
+    local n = #key
+    local perm = {}
+    for i = 1, n do perm[i] = i end
+    for i = n, 2, -1 do
+        local j = math.random(1, i)
+        perm[i], perm[j] = perm[j], perm[i]
+    end
+
+    local rnd = util.strongbytes(n * 4)
+    local sh = { {}, {}, {}, {} }
+    for i = 1, n do
+        local k = string.byte(key, perm[i])
+        local a = string.byte(rnd, i)
+        local b = string.byte(rnd, n + i)
+        local c = string.byte(rnd, 2 * n + i)
+        local d = crypt.bx(crypt.bx(crypt.bx(k, a), b), c)
+        sh[1][i], sh[2][i], sh[3][i], sh[4][i] = a, b, c, d
+    end
+
+    local s1, s2 = math.random(1, 251), math.random(1, 251)
+    local s3, s4 = math.random(1, 251), math.random(1, 251)
+    local m1, m2 = math.random(0, 255), math.random(0, 255)
+    local m3, m4 = math.random(0, 255), math.random(0, 255)
+    local sp, mp = math.random(1, 251), math.random(0, 255)
+    local KA = encode_table(sh[1], s1, m1)
+    local KB = encode_table(sh[2], s2, m2)
+    local KC = encode_table(sh[3], s3, m3)
+    local KD = encode_table(sh[4], s4, m4)
+    local KP = {}
+    for i = 1, n do
+        KP[i] = ((perm[i] - 1 + sp * i + mp) % n) + 1
+    end
+
+    local ss, sm = math.random(1, 251), math.random(0, 255)
+    local ST = encode_table(salt, ss, sm)
+
     return table.concat({
-        "local KT = " .. numtable(kt),
-        "local KB = {}",
-        "for i = 1, #KT do KB[i] = _C((KT[i] - i * 17) % 256) end",
-        "local KEY = _T(KB)",
-        "local ST = " .. numtable(st),
-        "local SB = {}",
-        "for i = 1, #ST do SB[i] = _C((ST[i] - i * 29) % 256) end",
-        "local SALT = _T(SB)",
+        "local KA = " .. numtable(KA),
+        "local KB = " .. numtable(KB),
+        "local KC = " .. numtable(KC),
+        "local KD = " .. numtable(KD),
+        "local KP = " .. numtable(KP),
+        "local KEY = {}",
+        "local kn = #KA",
+        "for i = 1, kn do",
+        "  local a = (KA[i] - " .. s1 .. " * i - " .. m1 .. ") % 256",
+        "  local b = (KB[i] - " .. s2 .. " * i - " .. m2 .. ") % 256",
+        "  local c = (KC[i] - " .. s3 .. " * i - " .. m3 .. ") % 256",
+        "  local d = (KD[i] - " .. s4 .. " * i - " .. m4 .. ") % 256",
+        "  local k = bx(bx(a, b), bx(c, d))",
+        "  local p = ((KP[i] - 1 - " .. sp .. " * i - " .. mp .. ") % kn) + 1",
+        "  KEY[p] = _C(k)",
+        "end",
+        "KA, KB, KC, KD, KP = nil, nil, nil, nil, nil",
+        "KEY = _T(KEY)",
+        "local ST = " .. numtable(ST),
+        "local SALT = {}",
+        "for i = 1, #ST do SALT[i] = _C((ST[i] - " .. ss .. " * i - " .. sm .. ") % 256) end",
+        "SALT = _T(SALT)",
+        "ST = nil",
     }, "\n")
 end
 
 local function keyinit_external(salt)
-    local st = crypt.hide_bytes(salt, 29)
+    local ss, sm = math.random(1, 251), math.random(0, 255)
+    local st = encode_table(salt, ss, sm)
     return table.concat({
         'local KEY = os.getenv("SHROUD_KEY") or ""',
         "if #KEY == 0 then return end",
         "local ST = " .. numtable(st),
-        "local SB = {}",
-        "for i = 1, #ST do SB[i] = _C((ST[i] - i * 29) % 256) end",
-        "local SALT = _T(SB)",
+        "local SALT = {}",
+        "for i = 1, #ST do SALT[i] = _C((ST[i] - " .. ss .. " * i - " .. sm .. ") % 256) end",
+        "SALT = _T(SALT)",
+        "ST = nil",
     }, "\n")
 end
 
@@ -140,19 +206,28 @@ local function do_verify(o, key, out_path)
 end
 
 local function make_key(o)
-    local key = o.key
-    if not key or key == "" then
-        local alpha = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        local t = {}
-        for i = 1, 40 do
-            local k = math.random(1, #alpha)
-            t[i] = alpha:sub(k, k)
-        end
-        key = table.concat(t)
-        print("[*] key    : generated (embedded) -> " .. key)
-    else
-        print("[*] key    : supplied (" .. #key .. " bytes)")
+    local supplied = o.key
+    if (not supplied or supplied == "") and o.keymode == "external" then
+        supplied = os.getenv("SHROUD_KEY")
     end
+
+    if o.keymode == "external" then
+        if not supplied or supplied == "" then
+            print("[!] external key mode needs --key or SHROUD_KEY")
+            return nil
+        end
+        print("[*] key    : external (" .. #supplied .. " bytes, not embedded)")
+        return supplied
+    end
+
+    if supplied and supplied ~= "" then
+        local key = crypt.rc4(supplied, string.rep("\0", 64))
+        print("[*] key    : supplied (" .. #supplied .. " bytes -> 64-byte key, embedded)")
+        return key
+    end
+
+    local key = crypt.rc4(util.strongbytes(32), string.rep("\0", 64))
+    print("[*] key    : generated 64 bytes (embedded, not shown)")
     return key
 end
 
@@ -314,7 +389,8 @@ local function main()
     print("[*] input  : " .. o.input .. " (" .. #src .. " bytes)")
 
     local key = make_key(o)
-    local salt = util.randbytes(16)
+    if not key then os.exit(1) end
+    local salt = util.strongbytes(16)
 
     local body = src
     local shebang = ""

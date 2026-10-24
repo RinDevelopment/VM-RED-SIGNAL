@@ -8,19 +8,29 @@ Protection for **your own** Lua code. Two independent pipelines, both verified e
 cd lua-shroud
 
 # VM mode: source -> stripped bytecode -> remapped opcodes -> encrypted blob -> custom VM
-lua cli/obfuscate.lua input.lua --key='long-random-key' --mode=vm --out=out/protected.lua --verify
+lua cli/obfuscate.lua input.lua --mode=vm --out=out/protected.lua --verify
 lua out/protected.lua
 
 # source mode: string pool encryption + chunked encrypted source
-lua cli/obfuscate.lua input.lua --key='long-random-key' --mode=source --out=out/protected.lua --verify
+lua cli/obfuscate.lua input.lua --mode=source --out=out/protected.lua --verify
 lua out/protected.lua
 ```
 
-`--verify` runs the original and the protected build, compares stdout and exit code, and fails the build on any difference.
+No key is required. `--verify` runs the original and the protected build, compares stdout and exit code, and fails the build on any difference.
 
-## external key
+## embedded key
 
-Embedded mode is self-contained. External mode keeps the key out of the shipped file:
+A fresh 64-byte key is generated per build from OS entropy. It is never printed and never stored as raw bytes:
+
+1. The key is split into four random XOR shares.
+2. The shares are permuted and each byte is shifted by a per-build step and mask.
+3. The loader rebuilds the key in a loop, then drops the share tables immediately.
+
+`--key=<string>` is optional. It is expanded to 64 bytes with an RC4-based KDF and embedded through the same split-share path, so the supplied string never appears in the artifact. Use it only when you need reproducible builds.
+
+## external key (optional)
+
+External mode keeps even the derived key out of the shipped file:
 
 ```bash
 lua cli/obfuscate.lua input.lua --key="$KEY" --mode=vm --keymode=external --out=out/protected.lua
@@ -60,8 +70,9 @@ Constants (strings, numbers, booleans) travel inside the encrypted blob. No plai
 | opcode remap | n/a | per-build permutation |
 | debug info stripped | n/a | yes (`luac -s`) |
 | polymorphic loader names | yes | yes |
-| external key | yes | yes |
-| anti-hook check | yes | yes |
+| embedded key (split shares) | yes | yes |
+| external key (optional) | yes | yes |
+| anti-hook check | yes | yes (before decrypt) |
 | decoys | yes | n/a |
 
 ## layout
@@ -91,7 +102,7 @@ lua-shroud/
 bash test/run.sh
 ```
 
-Covers both modes, external keys, script arguments, shebang handling, closures, upvalues, varargs, multret, generic/numeric loops, metamethods, >50-element constructors, and a 317 KB source.
+Covers both modes, keyless embedded builds, external keys, per-build randomness, key-leak checks, script arguments, shebang handling, closures, upvalues, varargs, multret, generic/numeric loops, metamethods, >50-element constructors, and a 317 KB source.
 
 ## limits
 
@@ -102,4 +113,4 @@ Covers both modes, external keys, script arguments, shebang handling, closures, 
 
 ## on "nobody can deobfuscate"
 
-No obfuscator is absolute. If an attacker can run and instrument the process, plaintext constants eventually exist in memory. What this stack removes is the easy path: no readable source at rest, no standard bytecode signature, no stable loader fingerprint, and with `--keymode=external`, no key in the file. That is a materially higher cost than source encryption alone. Keep the key out of the artifact and rotate it per release.
+No obfuscator is absolute. If an attacker can run and instrument the process, plaintext constants eventually exist in memory. What this stack removes is the easy path: no readable source at rest, no standard bytecode signature, no stable loader fingerprint, and no raw key in the file. The embedded key is split into permuted XOR shares and reconstructed only inside the loader; `--keymode=external` removes even that material from the artifact. A determined attacker with a debugger can still trace the interpreter, so treat this as a cost multiplier, not a proof.
